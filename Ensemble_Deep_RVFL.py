@@ -6,7 +6,7 @@
 #@Software: PyCharm
 
 import numpy as np
-from sklearn.datasets import load_digits
+import sklearn.datasets as sk_dataset
 
 
 num_nodes = 50  # Number of enhancement nodes.
@@ -29,8 +29,11 @@ class EnsembleDeepRVFL:
         beta: A Numpy array shape is [n_feature + n_nodes, n_class], the projection matrix.
         activation: A string of activation name.
         n_layer: A integer, N=number of hidden layers.
+        data_std: A list, store normalization parameters for each layer.
+        data_mean: A list, store normalization parameters for each layer.
+        same_feature: A bool, the true means all the features have same meaning and boundary for example: images.
     """
-    def __init__(self, n_nodes, lam, w_random_vec_range, b_random_vec_range, activation, n_layer):
+    def __init__(self, n_nodes, lam, w_random_vec_range, b_random_vec_range, activation, n_layer, same_feature=False):
         self.n_nodes = n_nodes
         self.lam = lam
         self.w_random_range = w_random_vec_range
@@ -41,27 +44,31 @@ class EnsembleDeepRVFL:
         a = Activation()
         self.activation_function = getattr(a, activation)
         self.n_layer = n_layer
-        self.data_std = None
-        self.data_mean = None
+        self.data_std = [None] * self.n_layer
+        self.data_mean = [None] * self.n_layer
+        self.same_feature = same_feature
 
 
-    def train(self, data, label):
+    def train(self, data, label, n_class):
         """
 
         :param data: Training data.
         :param label: Training label.
+        :param n_class: An integer of number of class.
         :return: No return
         """
 
-        assert len(data.shape) > 1, f'data shape should be [n, dim].'
-        assert len(data) == len(label), f'label number does not match data number.'
+        assert len(data.shape) > 1, 'Data shape should be [n, dim].'
+        assert len(data) == len(label), 'Label number does not match data number.'
+        assert len(label.shape) == 1, 'Label should be 1-D array.'
 
-        data = self.normalize(data)  # Normalization data
         n_sample = len(data)
         n_feature = len(data[0])
-        h = data
-        y = self.one_hot(label, num_class)
+        h = data.copy()
+        data = self.standardize(data, 0)
+        y = self.one_hot(label, n_class)
         for i in range(self.n_layer):
+            h = self.standardize(h, i)  # Normalization data
             self.random_weights.append(self.get_random_vectors(len(h[0]), self.n_nodes, self.w_random_range))
             self.random_bias.append(self.get_random_vectors(1, self.n_nodes, self.b_random_range))
             h = self.activation_function(np.dot(h, self.random_weights[i]) + np.dot(np.ones([n_sample, 1]),
@@ -82,11 +89,12 @@ class EnsembleDeepRVFL:
         :param output_prob: A bool number, if True return the raw predict probability, if False return predict class.
         :return: Prediction result.
         """
-        data = self.normalize(data)  # Normalization data
         n_sample = len(data)
-        h = data
+        h = data.copy()
+        data = self.standardize(data, 0)  # Normalization data
         results = []
         for i in range(self.n_layer):
+            h = self.standardize(h, i)  # Normalization data
             h = self.activation_function(np.dot(h, self.random_weights[i]) + np.dot(np.ones([n_sample, 1]),
                                                                                     self.random_bias[i]))
             d = np.concatenate([h, data], axis=1)
@@ -108,11 +116,18 @@ class EnsembleDeepRVFL:
         :param label: Evaluation label.
         :return: Accuracy.
         """
-        data = self.normalize(data)  # Normalization data
+
+        assert len(data.shape) > 1, 'Data shape should be [n, dim].'
+        assert len(data) == len(label), 'Label number does not match data number.'
+        assert len(label.shape) == 1, 'Label should be 1-D array.'
+
         n_sample = len(data)
-        h = data
+        h = data.copy()
+        data = self.standardize(data, 0)
         results = []
         for i in range(self.n_layer):
+            h = self.standardize(h, i)  # Normalization data
+
             h = self.activation_function(np.dot(h, self.random_weights[i]) + np.dot(np.ones([n_sample, 1]),
                                                                                     self.random_bias[i]))
             d = np.concatenate([h, data], axis=1)
@@ -134,12 +149,19 @@ class EnsembleDeepRVFL:
             y[i, x[i]] = 1
         return y
 
-    def normalize(self, x):
-        if self.data_std is None:
-            self.data_std = np.std(x)
-        if self.data_mean is None:
-            self.data_mean = np.mean(x)
-        return (x - self.data_mean) / self.data_std
+    def standardize(self, x, index):
+        if self.same_feature is True:
+            if self.data_std[index] is None:
+                self.data_std[index] = np.std(x)
+            if self.data_mean[index] is None:
+                self.data_mean[index] = np.mean(x)
+            return (x - self.data_mean[index]) / self.data_std[index]
+        else:
+            if self.data_std[index] is None:
+                self.data_std[index] = np.std(x, axis=0)
+            if self.data_mean[index] is None:
+                self.data_mean[index] = np.mean(x, axis=0)
+            return (x - self.data_mean[index]) / self.data_std[index]
 
 
 class Activation:
@@ -166,10 +188,10 @@ class Activation:
 
 
 def prepare_data(proportion):
-    digits_dataset = load_digits()
-    label = digits_dataset['target']
-    data = digits_dataset['data']
-    n_class = len(digits_dataset['target_names'])
+    dataset = sk_dataset.load_wine()
+    label = dataset['target']
+    data = dataset['data']
+    n_class = len(dataset['target_names'])
 
     shuffle_index = np.arange(len(label))
     np.random.shuffle(shuffle_index)
@@ -186,7 +208,7 @@ def prepare_data(proportion):
 
 if __name__ == '__main__':
     train, val, num_class = prepare_data(0.9)
-    ensemble_deep_rvfl = EnsembleDeepRVFL(num_nodes, regular_para, weight_random_range, bias_random_range, 'relu', num_layer)
-    ensemble_deep_rvfl.train(train[0], train[1])
+    ensemble_deep_rvfl = EnsembleDeepRVFL(num_nodes, regular_para, weight_random_range, bias_random_range, 'relu', num_layer, False)
+    ensemble_deep_rvfl.train(train[0], train[1], num_class)
     prediction = ensemble_deep_rvfl.predict(val[0], output_prob=False)
     accuracy = ensemble_deep_rvfl.eval(val[0], val[1])
