@@ -41,6 +41,9 @@ class EnsembleDeepRVFL:
         a = Activation()
         self.activation_function = getattr(a, activation)
         self.n_layer = n_layer
+        self.data_std = None
+        self.data_mean = None
+
 
     def train(self, data, label):
         """
@@ -132,7 +135,11 @@ class EnsembleDeepRVFL:
         return y
 
     def normalize(self, x):
-        return (x - np.mean(x)) / np.std(x)
+        if self.data_std is None:
+            self.data_std = np.std(x)
+        if self.data_mean is None:
+            self.data_mean = np.mean(x)
+        return (x - self.data_mean) / self.data_std
 
 
 class Activation:
