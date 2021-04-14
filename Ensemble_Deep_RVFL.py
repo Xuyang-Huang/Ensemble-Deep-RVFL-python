@@ -9,11 +9,11 @@ import numpy as np
 import sklearn.datasets as sk_dataset
 
 
-num_nodes = 50  # Number of enhancement nodes.
-regular_para = 0.05  # Regularization parameter.
+num_nodes = 2  # Number of enhancement nodes.
+regular_para = 1  # Regularization parameter.
 weight_random_range = [-1, 1]  # Range of random weights.
-bias_random_range = [-1, 1]  # Range of random weights.
-num_layer = 5  # Number of hidden layers
+bias_random_range = [0, 1]  # Range of random weights.
+num_layer = 2  # Number of hidden layers
 
 
 class EnsembleDeepRVFL:
@@ -77,8 +77,10 @@ class EnsembleDeepRVFL:
 
             h = d
 
+            d = np.concatenate([d, np.ones_like(d[:, 0:1])], axis=1)
+
             if n_sample > (self.n_nodes + n_feature):
-                self.beta.append(np.linalg.inv((self.lam * np.identity(n_feature + self.n_nodes) + np.dot(d.T, d))).dot(d.T).dot(y))
+                self.beta.append(np.linalg.inv((self.lam * np.identity(d.shape[1]) + np.dot(d.T, d))).dot(d.T).dot(y))
             else:
                 self.beta.append(d.T.dot(np.linalg.inv(self.lam * np.identity(n_sample) + np.dot(d, d.T))).dot(y))
 
@@ -100,10 +102,13 @@ class EnsembleDeepRVFL:
             d = np.concatenate([h, data], axis=1)
 
             h = d
+
+            d = np.concatenate([d, np.ones_like(d[:, 0:1])], axis=1)
+
             if not output_prob:
                 results.append(np.argmax(np.dot(d, self.beta[i]), axis=1))
             else:
-                results.append(np.dot(d, self.beta[i]))
+                results.append(self.softmax(np.dot(d, self.beta[i])))
         if not output_prob:
             results = list(map(np.bincount, list(np.array(results).transpose())))
             results = np.array(list(map(np.argmax, results)))
@@ -133,6 +138,9 @@ class EnsembleDeepRVFL:
             d = np.concatenate([h, data], axis=1)
 
             h = d
+
+            d = np.concatenate([d, np.ones_like(d[:, 0:1])], axis=1)
+
             results.append(np.argmax(np.dot(d, self.beta[i]), axis=1))
         results = list(map(np.bincount, list(np.array(results).transpose())))
         results = np.array(list(map(np.argmax, results)))
@@ -152,16 +160,19 @@ class EnsembleDeepRVFL:
     def standardize(self, x, index):
         if self.same_feature is True:
             if self.data_std[index] is None:
-                self.data_std[index] = np.std(x)
+                self.data_std[index] = np.maximum(np.std(x), 1/np.sqrt(len(x)))
             if self.data_mean[index] is None:
                 self.data_mean[index] = np.mean(x)
             return (x - self.data_mean[index]) / self.data_std[index]
         else:
             if self.data_std[index] is None:
-                self.data_std[index] = np.std(x, axis=0)
+                self.data_std[index] = np.maximum(np.std(x, axis=0), 1/np.sqrt(len(x)))
             if self.data_mean[index] is None:
                 self.data_mean[index] = np.mean(x, axis=0)
             return (x - self.data_mean[index]) / self.data_std[index]
+
+    def softmax(self, x):
+        return np.exp(x) / np.repeat((np.sum(np.exp(x), axis=1))[:, np.newaxis], len(x[0]), axis=1)
 
 
 class Activation:
@@ -186,9 +197,14 @@ class Activation:
     def relu(self, x):
         return np.maximum(0, x)
 
+    def leaky_relu(self, x):
+        x[x >= 0] = x[x >= 0]
+        x[x < 0] = x[x < 0] / 10.0
+        return x
+
 
 def prepare_data(proportion):
-    dataset = sk_dataset.load_wine()
+    dataset = sk_dataset.load_breast_cancer()
     label = dataset['target']
     data = dataset['data']
     n_class = len(dataset['target_names'])
@@ -207,8 +223,11 @@ def prepare_data(proportion):
 
 
 if __name__ == '__main__':
-    train, val, num_class = prepare_data(0.9)
+    train, val, num_class = prepare_data(0.8)
     ensemble_deep_rvfl = EnsembleDeepRVFL(num_nodes, regular_para, weight_random_range, bias_random_range, 'relu', num_layer, False)
     ensemble_deep_rvfl.train(train[0], train[1], num_class)
-    prediction = ensemble_deep_rvfl.predict(val[0], output_prob=False)
-    accuracy = ensemble_deep_rvfl.eval(val[0], val[1])
+    prediction = ensemble_deep_rvfl.predict(val[0], output_prob=True)
+    train_acc = ensemble_deep_rvfl.eval(train[0], train[1])
+    val_acc = ensemble_deep_rvfl.eval(val[0], val[1])
+    print('train acc:', train_acc)
+    print('val acc:', val_acc)
